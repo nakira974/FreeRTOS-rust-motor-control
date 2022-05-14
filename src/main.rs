@@ -1,17 +1,18 @@
-use freertos_rust::*;
+use std::io;
 use std::io::{Read, stdout, Write};
-use std::{io};
+use std::str;
+
 use clap::error::ContextValue::String;
-use serialport::{available_ports, SerialPort, SerialPortType};
+use freertos_rust::*;
 use rand::Rng;
+use serialport::{available_ports, SerialPort, SerialPortType};
 
 #[global_allocator]
 static GLOBAL: FreeRtosAllocator = FreeRtosAllocator;
 
 
 fn main() {
-
-    let x = Box::new(15);
+    let x = Box::new(30);
     println!("Boxed int '{}' (allocator test)", x);
 
     unsafe {
@@ -30,10 +31,10 @@ fn main() {
     let mut clone = port.try_clone().expect("Failed to clone");
     println!("Starting FreeRTOS app ...");
 
-    Task::new().name("Hello Task").stack_size(128).priority(TaskPriority(2)).start(||  {hello_task();}).unwrap();
-    Task::new().name("Serial Listen Task").stack_size(256).priority(TaskPriority(2)).start(||  {serial_listen_task(port);}).unwrap();
-    Task::new().name("Serial Send Task").stack_size(256).priority(TaskPriority(2)).start(||  {serial_send_task(clone);}).unwrap();
+    Task::new().name("Serial Send Task").stack_size(256).priority(TaskPriority(2)).start(|| { serial_send_task(clone); }).unwrap();
+    Task::new().name("Serial Listen Task").stack_size(256).priority(TaskPriority(2)).start(|| { serial_listen_task(port); }).unwrap();
 
+    //Task::new().name("Hello Task").stack_size(128).priority(TaskPriority(5)).start(||  {hello_task();}).unwrap();
 
 
     println!("Tasks registered");
@@ -45,27 +46,41 @@ fn main() {
         println!("Loop forever!");
     }
 }
+
 fn hello_task() {
     let mut i = 0;
+
     loop {
-        println!("Hello from Task! {}", i);
+        println!("{}", i);
         CurrentTask::delay(Duration::ms(1000));
         i = i + 1;
     }
 }
 
-fn serial_listen_task(mut port: Box<dyn SerialPort>){
+
+fn serial_listen_task(mut port: Box<dyn SerialPort>) {
     let mut serial_buf: Vec<u8> = vec![0; 8];
-    loop {
-        match port.read(serial_buf.as_mut_slice()) {
-            Ok(t) => println!("{}" , std::string::String::from_utf8(serial_buf[..t].to_owned()).unwrap()),
-            Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
-            Err(e) => eprintln!("{:?}", e),
+
+    let mut x_handle: freertos_rust::FreeRtosTaskHandle;
+    unsafe { x_handle = freertos_rs_get_current_task(); }
+
+    unsafe {
+        loop {
+            let mut task_info: FreeRtosCharPtr = freertos_rs_task_get_name(x_handle);
+            let byte = *task_info;
+            let bytes = [byte];
+            let mut task_name = str::from_utf8(bytes.as_ref()).unwrap();
+            match port.read(serial_buf.as_mut_slice()) {
+                Ok(t) => println!("{}:\n: {}",task_name ,
+                                  std::string::String::from_utf8(serial_buf[..t].to_owned()).unwrap()),
+                Err(ref e) if e.kind() == io::ErrorKind::TimedOut => (),
+                Err(e) => eprintln!("{:?}", e),
+            }
         }
     }
 }
 
-fn serial_send_task(mut clone: Box<dyn SerialPort>){
+fn serial_send_task(mut clone: Box<dyn SerialPort>) {
     loop {
         let num = rand::thread_rng().gen_range(1..4);
         clone
